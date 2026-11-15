@@ -1,9 +1,10 @@
 // ST. THERESA Billing - main application
 (function () {
-  const B = window.Billing, OD = window.OneDrive, CFG = window.APP_CONFIG || {};
+  const B = window.Billing, OD = window.Cloud, CFG = window.APP_CONFIG || {};
   const LS_KEY = "stt_billing_data_v1";
   const LS_DRAFT = "stt_billing_draft_v1";
-  const DATA_FILE = () => `${CFG.oneDriveFolder}/Data/billing-data.json`;
+  const LS_PENDING = "stt_billing_pending";
+  const DATA_FILE = () => `${CFG.driveFolder}/Data/billing-data.json`;
   const GST_RATES = [0, 3, 5, 12, 18, 28, 40];
 
   const $ = (s, el = document) => el.querySelector(s);
@@ -21,7 +22,8 @@
   function freshData() {
     const s = window.SEED_DATA;
     return {
-      version: 1, updatedAt: new Date().toISOString(),
+      version: 1,
+      updatedAt: "", // empty: data already in Google Drive always wins over this starter data
       settings: JSON.parse(JSON.stringify(s.settings)),
       customers: s.customers.map(c => ({ id: uid(), ...c })),
       products: s.products.map(([name, hsn, rate]) => ({ id: uid(), code: "", name, hsn, rate, gst: 5, taxIncluded: false, active: true })),
@@ -35,38 +37,52 @@
   }
   function saveLocal() { localStorage.setItem(LS_KEY, JSON.stringify(db)); }
 
+  function markPending() { localStorage.setItem(LS_PENDING, "1"); setSync(false, "Not synced · tap Sync"); }
+
   async function persist() {
     db.updatedAt = new Date().toISOString();
     saveLocal();
-    if (OD.isSignedIn()) {
-      try { await OD.writeJson(DATA_FILE(), db); setSync(true); }
-      catch (e) { console.error(e); setSync(false, "Sync failed"); toast("Saved on this device. OneDrive sync failed - will retry.", true); }
-    }
+    if (!OD.isConnected()) return;
+    if (!OD.hasToken()) { markPending(); return; }
+    try { await OD.writeJson(DATA_FILE(), db); localStorage.removeItem(LS_PENDING); setSync(true); }
+    catch (e) { console.error(e); markPending(); toast("Saved on this device. Tap Sync to save to Google Drive.", true); }
   }
 
-  // Pull latest from OneDrive (OneDrive is the master copy shared by phone + computer)
+  // Combine this device's data with Google Drive's copy.
+  // Bills from BOTH sides are always kept; customers/products/settings come from the newer copy.
+  function merge(local, remote) {
+    const newer = (local.updatedAt || "") > (remote.updatedAt || "") ? local : remote;
+    const map = new Map();
+    [...(remote.invoices || []), ...(local.invoices || [])].forEach(i => {
+      const e = map.get(i.id);
+      if (!e || (i.status === "cancelled" && e.status !== "cancelled")) map.set(i.id, i);
+    });
+    const invoices = [...map.values()].sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+    return { ...newer, invoices, updatedAt: [local.updatedAt || "", remote.updatedAt || ""].sort()[1] };
+  }
+
+  // Get latest from Google Drive (master copy shared by phone + computer), then save the combined copy back.
   async function pull() {
-    if (!OD.isSignedIn()) return;
     const remote = await OD.readJson(DATA_FILE());
-    if (remote && remote.settings) {
-      if (!db.updatedAt || remote.updatedAt >= db.updatedAt) { db = remote; saveLocal(); }
-      else await OD.writeJson(DATA_FILE(), db);   // this device has newer changes (made offline)
-    } else {
-      await OD.writeJson(DATA_FILE(), db); // first time: upload current data
-    }
+    const before = remote ? JSON.stringify(remote) : "";
+    if (remote && remote.settings) db = merge(db, remote);
+    if (!db.updatedAt) db.updatedAt = new Date().toISOString();
+    saveLocal();
+    if (JSON.stringify(db) !== before) await OD.writeJson(DATA_FILE(), db);
+    localStorage.removeItem(LS_PENDING);
     setSync(true);
   }
 
   // ================= UI HELPERS =================
   function toast(msg, err) {
     const t = $("#toast"); t.textContent = msg; t.className = "toast" + (err ? " err" : "");
-    clearTimeout(t._h); t._h = setTimeout(() => t.classList.add("hidden"), 3500);
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.add("hidden"), 4000);
   }
   function busy(on, text) { $("#busy").classList.toggle("hidden", !on); if (text) $("#busyText").textContent = text; }
   function setSync(on, text) {
     const s = $("#syncStatus");
     s.className = "sync " + (on ? "on" : "off");
-    s.textContent = text || (on ? "OneDrive synced" : (OD.enabled() ? "Not connected" : "Device only"));
+    s.textContent = text || (on ? "Drive synced" : (OD.isConnected() ? "Tap Sync" : "Device only"));
   }
   function openModal(id) { $("#" + id).classList.remove("hidden"); }
   function closeModal(id) { $("#" + id).classList.add("hidden"); }
@@ -106,27 +122,24 @@
         <div class="stat"><span class="muted">FY ${fy}</span><b>${money(sum(fyAll))}</b><small class="muted">${fyAll.length} bills</small></div>
         <div class="stat"><span class="muted">Next bill no.</span><b>${esc(next)}</b></div>
       </div>
-      ${!OD.isSignedIn() ? `<div class="card" style="border-color:#f3c98b;background:#fff9ef">
-        <b>OneDrive not connected.</b> <span class="muted">${OD.enabled() ? "Tap “Connect OneDrive” on top so bills are saved to OneDrive and shared between phone and computer." : "Finish setup Step 3 in README.md (add clientId in js/config.js). Until then, data is stored only on this device."}</span></div>` : ""}
+      ${!OD.isConnected() ? `<div class="card" style="border-color:#f3c98b;background:#fff9ef">
+        <b>Google Drive not connected.</b> <span class="muted">${OD.enabled() ? "Tap “Connect Google Drive” at the top so bills are saved to Google Drive and shared between phone and computer." : "Finish setup Step 3 in README.md (add googleClientId in js/config.js). Until then, data is stored only on this device."}</span></div>` : ""}
       <div class="card"><h2>Recent bills</h2><div class="list">${invoiceRows(db.invoices.slice().reverse().slice(0, 8)) || '<p class="muted">No bills yet.</p>'}</div></div>`;
     bindInvoiceRows();
   }
 
   // ================= INVOICE EDITOR =================
   let draft = null;
-  function newDraft() {
-    return { customerId: "", customer: null, date: today(), items: [blankItem()] };
-  }
+  function newDraft() { return { customerId: "", customer: null, date: today(), items: [blankItem()] }; }
   const blankItem = () => ({ key: uid(), name: "", hsn: "", qty: 1, rate: 0, gst: 5, taxIncluded: false });
   function saveDraft() { localStorage.setItem(LS_DRAFT, JSON.stringify(draft)); }
 
   function isInterState(c) { return !!c && String(c.stateCode || "") !== String(db.settings.business.stateCode); }
 
-  function viewEditor(arg) {
-    if (arg === "fresh" || !draft) {
-      try { draft = arg === "fresh" ? null : JSON.parse(localStorage.getItem(LS_DRAFT)); } catch { draft = null; }
+  function viewEditor() {
+    if (!draft) {
+      try { draft = JSON.parse(localStorage.getItem(LS_DRAFT)); } catch { draft = null; }
       if (!draft) draft = newDraft();
-      if (arg === "fresh") { saveDraft(); history.replaceState(null, "", "#new"); }
     }
     const fy = B.fyOf(draft.date);
     const nextNo = B.invoiceNumber(db.settings.invoicePrefix, B.nextSeq(db.invoices, fy, db.settings.seqStart), db.settings.numberDigits, fy);
@@ -223,7 +236,7 @@
       const it = draft.items.find(x => x.key === row.dataset.k);
       $$("[data-f]", row).forEach(inp => {
         const f = inp.dataset.f;
-        const ev = (f === "name") ? "change" : (inp.type === "checkbox" || inp.tagName === "SELECT") ? "change" : "input";
+        const ev = (f === "name" || inp.type === "checkbox" || inp.tagName === "SELECT") ? "change" : "input";
         inp.addEventListener(ev, () => {
           if (f === "taxIncluded") it.taxIncluded = inp.checked;
           else if (f === "qty" || f === "rate" || f === "gst") it[f] = Number(inp.value) || 0;
@@ -247,7 +260,6 @@
         renderItems(); renderTotals(); saveDraft();
       };
     });
-    $$(".m-only").forEach(s => s.style.display = window.innerWidth < 900 ? "inline" : "none");
   }
 
   function lineAmtHtml(l) {
@@ -277,23 +289,27 @@
     if (!totals.lines.length) { toast("Please add at least one item with quantity", true); return null; }
     const fy = B.fyOf(draft.date);
     const seq = B.nextSeq(db.invoices, fy, db.settings.seqStart);
+    const { lines, ...tot } = totals;
     return {
       id: uid(), fy, seq: assignNumber ? seq : null,
       number: assignNumber ? B.invoiceNumber(db.settings.invoicePrefix, seq, db.settings.numberDigits, fy) : "(Preview)",
       date: draft.date, customer: { ...draft.customer },
       business: { ...db.settings.business }, bank: { ...db.settings.bank },
-      items: totals.lines.map(({ key, ...l }) => l), totals: stripLines(totals),
+      items: lines.map(({ key, ...l }) => l), totals: tot,
       status: "active", createdAt: new Date().toISOString()
     };
   }
-  const stripLines = t => { const { lines, ...rest } = t; return rest; };
 
   async function generate() {
     if (!buildInvoice(false)) return;
-    if (!OD.isSignedIn() && !confirm("OneDrive is not connected.\n\nThe bill will be saved on this device only and the PDF downloaded. Continue?")) return;
+    const cloud = OD.isConnected();
+    if (cloud) {
+      // Must be the first await after the tap: Google may need to show its sign-in window
+      try { await OD.ensureToken(); } catch (e) { toast(e.message, true); return; }
+    } else if (!confirm("Google Drive is not connected.\n\nThe bill will be saved on this device only and the PDF downloaded. Continue?")) return;
     busy(true, "Creating bill…");
     try {
-      if (OD.isSignedIn()) await pull();           // get latest bill numbers from other devices
+      if (cloud) { busy(true, "Getting latest from Google Drive…"); await pull(); } // latest bill numbers from other devices
       const inv = buildInvoice(true);
       // Remember new products typed during billing
       inv.items.forEach(l => {
@@ -303,11 +319,11 @@
       busy(true, "Creating PDF…");
       const blob = await makePdf(inv);
       inv.fileName = inv.number.replace(/\//g, "_") + ".pdf";
-      if (OD.isSignedIn()) {
-        busy(true, "Saving to OneDrive…");
-        const path = `${CFG.oneDriveFolder}/Invoices/${inv.fy}/${inv.fileName}`;
+      if (cloud) {
+        busy(true, "Saving PDF to Google Drive…");
+        const path = `${CFG.driveFolder}/Invoices/${inv.fy}/${inv.fileName}`;
         const item = await OD.upload(path, blob, "application/pdf");
-        inv.oneDrivePath = path; inv.webUrl = item.webUrl;
+        inv.drivePath = path; inv.webUrl = item.webUrl;
       } else {
         downloadBlob(blob, inv.fileName);
       }
@@ -397,14 +413,14 @@
   async function makePdf(inv) {
     const stage = $("#pdfStage");
     stage.innerHTML = invoiceHtml(inv);
-    const blob = await html2pdf().set({
-      margin: [6, 6, 6, 6], filename: "invoice.pdf",
-      image: { type: "jpeg", quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true, windowWidth: 794 },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
-    }).from(stage.firstElementChild).outputPdf("blob");
-    stage.innerHTML = "";
-    return blob;
+    try {
+      return await html2pdf().set({
+        margin: [6, 6, 6, 6], filename: "invoice.pdf",
+        image: { type: "jpeg", quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, windowWidth: 794 },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
+      }).from(stage.firstElementChild).outputPdf("blob");
+    } finally { stage.innerHTML = ""; }
   }
 
   function downloadBlob(blob, name) {
@@ -427,9 +443,9 @@
     $("#printArea").innerHTML = invoiceHtml(inv);
     const acts = $("#previewActions");
     acts.innerHTML = isDraft
-      ? `<button class="btn" data-close="previewModal">Back to edit</button><button class="btn primary" id="pvGen">✔ Generate & Save</button>`
-      : `${inv.webUrl ? `<a class="btn" href="${esc(inv.webUrl)}" target="_blank" rel="noopener">Open in OneDrive</a>` : ""}
-         <button class="btn" id="pvPdf">⬇ PDF</button><button class="btn primary" id="pvPrint">🖨 Print</button>`;
+      ? `<button class="btn" data-close="previewModal" type="button">Back to edit</button><button class="btn primary" id="pvGen" type="button">✔ Generate & Save</button>`
+      : `${inv.webUrl ? `<a class="btn" href="${esc(inv.webUrl)}" target="_blank" rel="noopener">Open in Google Drive</a>` : ""}
+         <button class="btn" id="pvPdf" type="button">⬇ PDF</button><button class="btn primary" id="pvPrint" type="button">🖨 Print</button>`;
     if (isDraft) $("#pvGen").onclick = () => { closeModal("previewModal"); generate(); };
     else {
       $("#pvPrint").onclick = () => window.print();
@@ -446,9 +462,9 @@
         <small>${dmy(i.date)} · ${esc(i.customer.name)}</small></div>
       <div class="money">${money(i.totals.total)}</div>
       <div class="row">
-        <button class="btn small" data-act="view">View / Print</button>
-        <button class="btn small" data-act="dup" title="Create a new bill with the same items">Duplicate</button>
-        ${i.status !== "cancelled" ? '<button class="btn small danger" data-act="cancel">Cancel</button>' : ""}
+        <button class="btn small" data-act="view" type="button">View / Print</button>
+        <button class="btn small" data-act="dup" type="button" title="Create a new bill with the same items">Duplicate</button>
+        ${i.status !== "cancelled" ? '<button class="btn small danger" data-act="cancel" type="button">Cancel</button>' : ""}
       </div></div>`).join("");
   }
   function bindInvoiceRows() {
@@ -462,11 +478,12 @@
         saveDraft(); location.hash = "#new";
       }
       if (btn.dataset.act === "cancel") {
+        if (OD.isConnected()) { try { await OD.ensureToken(); } catch (e) { toast(e.message, true); return; } }
         if (!confirm(`Cancel ${inv.number}?\n\nThe number will NOT be reused. The bill stays in history marked CANCELLED.`)) return;
         busy(true, "Updating…");
         try {
           inv.status = "cancelled"; inv.cancelledAt = new Date().toISOString();
-          if (OD.isSignedIn() && inv.oneDrivePath) await OD.upload(inv.oneDrivePath, await makePdf(inv), "application/pdf");
+          if (OD.hasToken() && inv.drivePath) await OD.upload(inv.drivePath, await makePdf(inv), "application/pdf");
           await persist(); route();
         } catch (e) { toast(e.message, true); } finally { busy(false); }
       }
@@ -514,16 +531,16 @@
       const gstin = fv("cGst").toUpperCase();
       if (gstin && !/^[0-9]{2}[A-Z0-9]{13}$/.test(gstin)) { toast("GSTIN should be 15 characters", true); return false; }
       const code = $("#cState").value;
+      if (gstin && gstin.slice(0, 2) !== code && !confirm(`GSTIN starts with ${gstin.slice(0, 2)} but state code is ${code}. Save anyway?`)) return false;
       const data = { name: fv("cName"), address: fv("cAddr"), phone: fv("cPhone"), gstin, stateCode: code,
         state: window.INDIAN_STATES.find(s => s[1] === code)[0] };
-      if (gstin && gstin.slice(0, 2) !== code && !confirm(`GSTIN starts with ${gstin.slice(0, 2)} but state code is ${code}. Save anyway?`)) return false;
       let saved;
       if (c.id) { saved = Object.assign(db.customers.find(x => x.id === c.id), data); }
       else { saved = { id: uid(), ...data }; db.customers.push(saved); }
       persist(); toast("Customer saved");
       if (after) after(saved); else route();
     });
-    // auto-pick state from GSTIN
+    // pick state automatically from GSTIN
     $("#cGst").addEventListener("input", e => {
       const code = e.target.value.slice(0, 2);
       if (window.INDIAN_STATES.some(s => s[1] === code)) $("#cState").value = code;
@@ -531,7 +548,7 @@
   }
 
   function viewCustomers() {
-    $("#view").innerHTML = `<div class="row"><h1>Customers</h1><span class="spacer"></span><button class="btn primary" id="addC">＋ Add customer</button></div>
+    $("#view").innerHTML = `<div class="row"><h1>Customers</h1><span class="spacer"></span><button class="btn primary" id="addC" type="button">＋ Add customer</button></div>
       <div class="card"><input class="search" id="cSearch" placeholder="Search name, phone, GSTIN"></div><div class="list" id="cList"></div>`;
     const draw = () => {
       const q = norm($("#cSearch").value);
@@ -539,7 +556,7 @@
         .sort((a, b) => a.name.localeCompare(b.name));
       $("#cList").innerHTML = list.map(c => `<div class="list-item" data-cid="${c.id}">
         <div class="main"><b>${esc(c.name)}</b><small>${esc(c.address)}</small><small>Ph: ${esc(c.phone || "-")} · GSTIN: ${esc(c.gstin || "-")} · ${esc(c.state)}</small></div>
-        <div class="row"><button class="btn small" data-a="bill">New bill</button><button class="btn small" data-a="edit">Edit</button><button class="btn small danger" data-a="del">Delete</button></div></div>`).join("") || '<p class="muted">No customers.</p>';
+        <div class="row"><button class="btn small" data-a="bill" type="button">New bill</button><button class="btn small" data-a="edit" type="button">Edit</button><button class="btn small danger" data-a="del" type="button">Delete</button></div></div>`).join("") || '<p class="muted">No customers.</p>';
       $$("[data-cid] [data-a]").forEach(b => b.onclick = () => {
         const c = db.customers.find(x => x.id === b.closest("[data-cid]").dataset.cid);
         if (b.dataset.a === "edit") openCustomerForm(c);
@@ -570,7 +587,7 @@
   }
 
   function viewProducts() {
-    $("#view").innerHTML = `<div class="row"><h1>Products</h1><span class="spacer"></span><button class="btn primary" id="addP">＋ Add product</button></div>
+    $("#view").innerHTML = `<div class="row"><h1>Products</h1><span class="spacer"></span><button class="btn primary" id="addP" type="button">＋ Add product</button></div>
       <div class="card"><input class="search" id="pSearch" placeholder="Search name, code, HSN"></div><div class="list" id="pList"></div>`;
     const draw = () => {
       const q = norm($("#pSearch").value);
@@ -579,7 +596,7 @@
         <div class="main"><b>${p.code ? esc(p.code) + " · " : ""}${esc(p.name)}</b>
           <small>HSN ${esc(p.hsn)} · GST ${p.gst}% · ${p.taxIncluded ? "Rate includes tax" : "Tax added on top"}${p.active === false ? " · inactive" : ""}</small></div>
         <div class="money">₹${p.rate}</div>
-        <div class="row"><button class="btn small" data-a="edit">Edit</button><button class="btn small danger" data-a="del">Delete</button></div></div>`).join("") || '<p class="muted">No products.</p>';
+        <div class="row"><button class="btn small" data-a="edit" type="button">Edit</button><button class="btn small danger" data-a="del" type="button">Delete</button></div></div>`).join("") || '<p class="muted">No products.</p>';
       $$("[data-pid] [data-a]").forEach(b => b.onclick = () => {
         const p = db.products.find(x => x.id === b.closest("[data-pid]").dataset.pid);
         if (b.dataset.a === "edit") openProductForm(p);
@@ -611,10 +628,10 @@
         <div><label>Prefix</label><input id="nPre" value="${esc(s.invoicePrefix)}"></div>
         <div><label>Next number for FY ${fy}</label><input id="nNext" type="number" min="1" value="${nextSeq}"></div>
         <div class="full muted">Example: ${esc(B.invoiceNumber(s.invoicePrefix, nextSeq, s.numberDigits, fy))}. Numbers restart from 1 every April.</div></div></div>
-      <div class="row"><button class="btn primary" id="sSave">Save settings</button></div>
+      <div class="row"><button class="btn primary" id="sSave" type="button">Save settings</button></div>
       <div class="card" style="margin-top:14px"><h2>Backup</h2>
-        <p class="muted">When OneDrive is connected, all data is saved automatically to <b>${esc(CFG.oneDriveFolder)}/Data/billing-data.json</b> and bills to <b>${esc(CFG.oneDriveFolder)}/Invoices/</b>.</p>
-        <div class="row"><button class="btn" id="bExp">⬇ Download backup</button>
+        <p class="muted">When Google Drive is connected, all data is saved automatically to <b>${esc(CFG.driveFolder)}/Data/billing-data.json</b> and bills to <b>${esc(CFG.driveFolder)}/Invoices/</b>.</p>
+        <div class="row"><button class="btn" id="bExp" type="button">⬇ Download backup</button>
         <label class="btn" style="margin:0;color:var(--text);font-size:15px;font-weight:400">⬆ Restore backup<input type="file" id="bImp" accept=".json" hidden></label></div></div>`;
     $("#sSave").onclick = () => {
       Object.assign(b, { name: fv("sName"), address: fv("sAddr"), phone: fv("sPhone"), gstin: fv("sGst"), state: fv("sState"), stateCode: fv("sCode") });
@@ -639,22 +656,42 @@
   }
 
   // ================= START =================
+  function updateAccountUi() {
+    const con = OD.isConnected();
+    $("#btnSignIn").textContent = con ? "⟳ Sync" : "Connect Google Drive";
+    $("#btnSignOut").classList.toggle("hidden", !con);
+    $("#btnSignOut").title = OD.userName();
+    if (!con) setSync(false);
+    else if (localStorage.getItem(LS_PENDING)) setSync(false, "Not synced · tap Sync");
+    else setSync(OD.hasToken());
+  }
+
   async function start() {
     loadLocal();
-    setSync(false);
-    $("#btnSignIn").onclick = () => { try { OD.signIn(); } catch (e) { toast(e.message, true); } };
-    $("#btnSignOut").onclick = () => OD.signOut();
-    try {
-      const acc = await OD.init();
-      if (acc) {
-        $("#btnSignIn").classList.add("hidden"); $("#btnSignOut").classList.remove("hidden");
-        $("#btnSignOut").title = OD.userName();
-        busy(true, "Loading from OneDrive…");
+    $("#btnSignIn").onclick = async () => {
+      try {
+        await OD.ensureToken();                 // must be first: may open Google sign-in
+        busy(true, "Syncing with Google Drive…");
+        await OD.fetchUser();
         await pull();
-      }
-    } catch (e) { console.error(e); toast("OneDrive: " + e.message, true); setSync(false, "Sync failed"); }
-    finally { busy(false); }
+        toast("Google Drive synced ✔");
+        route();
+      } catch (e) { console.error(e); toast(e.message, true); }
+      finally { busy(false); updateAccountUi(); }
+    };
+    $("#btnSignOut").onclick = () => {
+      if (!confirm("Disconnect Google Drive on this device?\n\nNothing is deleted. Bills already in Google Drive stay there.")) return;
+      OD.signOut(); updateAccountUi(); route();
+    };
+    try {
+      await OD.init();
+      if (OD.isConnected() && OD.hasToken()) { busy(true, "Loading from Google Drive…"); await pull(); }
+    } catch (e) { console.error(e); toast("Google Drive: " + e.message, true); }
+    finally { busy(false); updateAccountUi(); }
     route();
   }
+
+  // Exposed only for automated tests
+  window.__stt = { merge };
   start();
 })();

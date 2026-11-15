@@ -15,10 +15,10 @@
     </div>
     <nav class="desk-nav" id="deskNav"></nav>
     <div class="account">
-      <span id="syncStatus" class="sync off">Offline</span>
+      <span id="syncStatus" class="sync off">Device only</span>
       <a href="#settings" class="btn small ghost m-settings" title="Settings" style="color:#fff;text-decoration:none">⚙</a>
-      <button id="btnSignIn" class="btn small">Connect OneDrive</button>
-      <button id="btnSignOut" class="btn small ghost hidden">Sign out</button>
+      <button id="btnSignIn" class="btn small" type="button">Connect Google Drive</button>
+      <button id="btnSignOut" class="btn small ghost hidden" type="button">Disconnect</button>
     </div>
   </header>
 
@@ -31,7 +31,7 @@
     <div class="modal-box wide">
       <div class="modal-head no-print">
         <h3 id="previewTitle">Invoice</h3>
-        <button class="icon-btn" data-close="previewModal" aria-label="Close">✕</button>
+        <button class="icon-btn" data-close="previewModal" aria-label="Close" type="button">✕</button>
       </div>
       <div class="preview-scroll"><div id="previewScale"><div id="printArea"></div></div></div>
       <div class="modal-foot no-print" id="previewActions"></div>
@@ -43,9 +43,9 @@
     <div class="modal-box">
       <div class="modal-head">
         <h3 id="formTitle"></h3>
-        <button class="icon-btn" data-close="formModal" aria-label="Close">✕</button>
+        <button class="icon-btn" data-close="formModal" aria-label="Close" type="button">✕</button>
       </div>
-      <form id="formBody" class="form-grid"></form>
+      <form id="formBody" class="form-grid" onsubmit="return false"></form>
       <div class="modal-foot">
         <button class="btn ghost" data-close="formModal" type="button">Cancel</button>
         <button class="btn primary" id="formSave" type="button">Save</button>
@@ -58,12 +58,12 @@
   <div id="toast" class="toast hidden"></div>
   <div id="busy" class="busy hidden"><div class="spinner"></div><p id="busyText">Please wait…</p></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
   <script src="js/config.js"></script>
   <script src="js/seed.js"></script>
   <script src="js/billing.js"></script>
-  <script src="js/onedrive.js"></script>
+  <script src="js/gdrive.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

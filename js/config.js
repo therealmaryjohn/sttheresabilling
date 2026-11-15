@@ -1,16 +1,12 @@
 // ===============================================================
 //  ST. THERESA Billing - CONFIGURATION
-//  Only this file needs editing after you create the Microsoft
-//  "App registration" (see README.md, Step 3).
+//  Only this file needs editing (see README.md, Step 3).
 // ===============================================================
 window.APP_CONFIG = {
-  // Paste the "Application (client) ID" from Azure App registration here.
-  // Leave empty to use the app in offline mode (data saved only on this device).
-  clientId: "05aab124-f409-43cb-8e4b-887dcde28233",
+  // Paste your Google "OAuth Client ID" here. It ends with .apps.googleusercontent.com
+  // Leave empty to use the app without Google Drive (data saved only on this device).
+  googleClientId: "",
 
-  // "common" works for both personal Microsoft (Outlook/Hotmail) and work accounts.
-  authority: "https://login.microsoftonline.com/common",
-
-  // Main folder that will be created in your OneDrive
-  oneDriveFolder: "ST THERESA Billing"
+  // Main folder that will be created in your Google Drive
+  driveFolder: "ST THERESA Billing"
 };

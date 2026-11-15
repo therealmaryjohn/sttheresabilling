@@ -34,9 +34,7 @@ button, input, select, textarea { font: inherit; }
   display: grid; place-items: center; font-weight: 800;
 }
 .desk-nav { display: none; gap: 4px; flex: 1; }
-.desk-nav a, .bottom-nav a {
-  color: inherit; text-decoration: none; border-radius: 8px;
-}
+.desk-nav a, .bottom-nav a { color: inherit; text-decoration: none; border-radius: 8px; }
 .desk-nav a { padding: 8px 12px; opacity: .85; }
 .desk-nav a.active, .desk-nav a:hover { background: rgba(255,255,255,.18); opacity: 1; }
 .account { margin-left: auto; display: flex; align-items: center; gap: 8px; }
@@ -59,6 +57,11 @@ button, input, select, textarea { font: inherit; }
   body { padding-bottom: 0; }
   .desk-nav { display: flex; }
   .bottom-nav { display: none; }
+  .m-settings { display: none; }
+}
+@media (max-width: 520px) {
+  .brand small, .sync { display: none; }
+  .topbar { gap: 8px; padding: 8px 10px; }
 }
 
 /* ---------- Layout ---------- */
@@ -81,6 +84,7 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 .btn {
   border: 1px solid var(--line); background: #fff; color: var(--text);
   padding: 10px 16px; border-radius: 10px; cursor: pointer; min-height: 42px;
+  display: inline-flex; align-items: center; justify-content: center; text-decoration: none;
 }
 .btn.small { padding: 6px 12px; min-height: 34px; font-size: 13px; }
 .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; font-weight: 600; }
@@ -119,6 +123,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand-2); b
 .item .amt small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
 .item .incl { justify-content: center; }
 .item label { display: none; }
+.item .m-only { display: none; }
 
 @media (max-width: 899px) {
   .items-head { display: none; }
@@ -127,6 +132,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand-2); b
     border-radius: 10px; margin-bottom: 10px; padding: 10px; position: relative;
   }
   .item label { display: block; }
+  .item .m-only { display: inline; }
   .item .sl { position: absolute; top: 8px; right: 44px; font-size: 12px; }
   .item .f-name { grid-column: 1 / -1; padding-right: 60px; }
   .item .incl { justify-content: flex-start; padding-top: 18px; }
@@ -219,5 +225,3 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand-2); b
   .preview-scroll { overflow: visible; padding: 0; background: none; }
   .inv { width: 100%; min-height: 0; padding: 0; }
 }
-@media (min-width: 900px) { .m-settings { display: none; } }
-@media (max-width: 520px) { .brand small, .sync { display: none; } .topbar { gap: 8px; } }

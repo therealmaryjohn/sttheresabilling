@@ -1,5 +1,6 @@
 // Starting data taken from the sample invoices DC/0018 to DC/0024 (2026-27).
-// After first run, everything is edited from the app itself.
+// Used only on the very first run. After that everything is edited in the app
+// and saved in Google Drive.
 window.SEED_DATA = {
   settings: {
     business: {
