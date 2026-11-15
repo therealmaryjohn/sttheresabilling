@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#7a1f3d">
+  <title>ST. THERESA Billing</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar no-print">
+    <div class="brand">
+      <span class="logo">ST</span>
+      <div><strong>ST. THERESA</strong><small>Billing</small></div>
+    </div>
+    <nav class="desk-nav" id="deskNav"></nav>
+    <div class="account">
+      <span id="syncStatus" class="sync off">Offline</span>
+      <a href="#settings" class="btn small ghost m-settings" title="Settings" style="color:#fff;text-decoration:none">⚙</a>
+      <button id="btnSignIn" class="btn small">Connect OneDrive</button>
+      <button id="btnSignOut" class="btn small ghost hidden">Sign out</button>
+    </div>
+  </header>
+
+  <main id="view" class="no-print"></main>
+
+  <nav class="bottom-nav no-print" id="mobileNav"></nav>
+
+  <!-- Invoice preview -->
+  <div id="previewModal" class="modal hidden">
+    <div class="modal-box wide">
+      <div class="modal-head no-print">
+        <h3 id="previewTitle">Invoice</h3>
+        <button class="icon-btn" data-close="previewModal" aria-label="Close">✕</button>
+      </div>
+      <div class="preview-scroll"><div id="previewScale"><div id="printArea"></div></div></div>
+      <div class="modal-foot no-print" id="previewActions"></div>
+    </div>
+  </div>
+
+  <!-- Generic form modal (customer / product) -->
+  <div id="formModal" class="modal hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3 id="formTitle"></h3>
+        <button class="icon-btn" data-close="formModal" aria-label="Close">✕</button>
+      </div>
+      <form id="formBody" class="form-grid"></form>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close="formModal" type="button">Cancel</button>
+        <button class="btn primary" id="formSave" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Off-screen A4 sheet used only for creating PDFs -->
+  <div id="pdfStage" aria-hidden="true"></div>
+  <div id="toast" class="toast hidden"></div>
+  <div id="busy" class="busy hidden"><div class="spinner"></div><p id="busyText">Please wait…</p></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/seed.js"></script>
+  <script src="js/billing.js"></script>
+  <script src="js/onedrive.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
