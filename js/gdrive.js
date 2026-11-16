@@ -115,6 +115,15 @@
     return { id: j.id, webUrl: j.webViewLink };
   }
 
+  /** Move a file (made by this app) to the Google Drive bin. Returns false if it doesn't exist. */
+  async function trash(path) {
+    const { dirs, name } = split(path);
+    const f = await findChild(await folderId(dirs), name, false);
+    if (!f) return false;
+    await api(`${API}/files/${f.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trashed: true }) });
+    return true;
+  }
+
   const writeJson = (path, obj) => upload(path, JSON.stringify(obj, null, 2), "application/json");
 
   async function fetchUser() {
@@ -131,6 +140,6 @@
     Object.keys(folderCache).forEach(k => delete folderCache[k]);
   }
 
-  window.Cloud = { enabled, init, ensureToken, hasToken, isConnected, readJson, writeJson, upload, folderLink, fetchUser, signOut,
+  window.Cloud = { enabled, init, ensureToken, hasToken, isConnected, readJson, writeJson, upload, trash, folderLink, fetchUser, signOut,
     userName: () => localStorage.getItem(LS_USER) || "" };
 })();

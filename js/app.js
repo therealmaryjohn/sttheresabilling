@@ -5,6 +5,7 @@
   const DATA_FILE = () => `${CFG.driveFolder}/Data/billing-data.json`;
   const EWAY_URL = CFG.ewayUrl || "https://ewaybillgst.gov.in/Login.aspx";
   const GST_RATES = [0, 3, 5, 12, 18, 28, 40];
+  const A4_W = 794, A4_H = 1122;     // A4 in CSS pixels (96 dpi)
 
   const $ = (s, el = document) => el.querySelector(s);
   const $$ = (s, el = document) => [...el.querySelectorAll(s)];
@@ -48,21 +49,25 @@
   // Bills from BOTH devices are always kept; customers/products/settings come from the newer copy.
   function merge(local, remote) {
     const newer = (local.updatedAt || "") > (remote.updatedAt || "") ? local : remote;
+    const deleted = { ...(remote.deleted || {}), ...(local.deleted || {}) };   // id -> number, deleted on any device
     const map = new Map();
     [...(remote.invoices || []), ...(local.invoices || [])].forEach(i => {
+      if (deleted[i.id]) return;
       const e = map.get(i.id);
       if (!e) { map.set(i.id, i); return; }
-      const m = { ...e, ...i };
-      if (e.status === "cancelled" || i.status === "cancelled") m.status = "cancelled";
-      m.webUrl = i.webUrl || e.webUrl; m.drivePath = i.drivePath || e.drivePath;
-      const ea = e.ewb || {}, ia = i.ewb || {};
-      if (e.ewb || i.ewb) m.ewb = { ...ea, ...ia, webUrl: ia.webUrl || ea.webUrl, drivePath: ia.drivePath || ea.drivePath, no: ia.no || ea.no };
+      // the most recently edited copy of the bill wins
+      const [older, latest] = (i.editedAt || "") >= (e.editedAt || "") ? [e, i] : [i, e];
+      const m = { ...older, ...latest };
+      i = latest; const e2 = older;
+      m.webUrl = i.webUrl || e2.webUrl; m.drivePath = i.drivePath || e2.drivePath;
+      const ea = e2.ewb || {}, ia = i.ewb || {};
+      if (e2.ewb || i.ewb) m.ewb = { ...ea, ...ia, webUrl: ia.webUrl || ea.webUrl, drivePath: ia.drivePath || ea.drivePath, no: ia.no || ea.no };
       map.set(i.id, m);
     });
     const invoices = [...map.values()].sort((a, b) => (a.date || "").localeCompare(b.date || "") || (a.seq || 0) - (b.seq || 0));
     const settings = { ...newer.settings,
       ewayFolders: { ...((remote.settings || {}).ewayFolders || {}), ...((local.settings || {}).ewayFolders || {}) } };
-    return { ...newer, settings, invoices,
+    return { ...newer, settings, invoices, deleted,
       catalogVersion: Math.max(local.catalogVersion || 0, remote.catalogVersion || 0),
       oldBillsVersion: Math.max(local.oldBillsVersion || 0, remote.oldBillsVersion || 0),
       updatedAt: [local.updatedAt || "", remote.updatedAt || ""].sort()[1] };
@@ -105,8 +110,9 @@
       const fy = B.fyOf(o.date);
       const number = B.invoiceNumber(s.invoicePrefix || "DC", o.seq, s.numberDigits || 4, fy);
       const id = "old-" + number.replace(/\//g, "-");
+      if ((db.deleted || {})[id]) return;
       const existing = db.invoices.find(i => i.id === id || i.number === number);
-      if (existing) {   // already there: only add e-way bill details if missing
+      if (existing) {
         if (o.ewb && !(existing.ewb && existing.ewb.no)) existing.ewb = { ...(existing.ewb || {}), ...o.ewb };
         return;
       }
@@ -136,7 +142,6 @@
     return url;
   }
 
-  /** Form: E-Way Bill number + date + PDF. Saves the PDF to "E-Way Bills/<FY>/EWB_<invoice>.pdf". */
   function openEwbForm(inv) {
     const e = inv.ewb || {};
     openForm(`E-Way Bill · ${inv.number}`, `
@@ -287,10 +292,15 @@
 
   function viewEditor() {
     if (!draft) { try { draft = JSON.parse(localStorage.getItem(LS_DRAFT)); } catch { draft = null; } if (!draft) draft = newDraft(); }
+    const editing = draft.editId ? db.invoices.find(i => i.id === draft.editId) : null;
+    if (draft.editId && !editing) { draft = newDraft(); saveDraft(); }
     const fy = B.fyOf(draft.date);
-    const nextNo = B.invoiceNumber(db.settings.invoicePrefix, B.nextSeq(db.invoices, fy, db.settings.seqStart), db.settings.numberDigits, fy);
+    const nextNo = editing ? editing.number
+      : B.invoiceNumber(db.settings.invoicePrefix, B.nextSeq(db.invoices, fy, db.settings.seqStart), db.settings.numberDigits, fy);
     $("#view").innerHTML = `
-      <div class="row"><h1>New Bill</h1><span class="spacer"></span><button class="btn small ghost" id="btnClear" type="button">Clear</button></div>
+      <div class="row"><h1>${editing ? "Edit Bill " + esc(editing.number) : "New Bill"}</h1><span class="spacer"></span>
+        ${editing ? '<button class="btn small ghost" id="btnStopEdit" type="button">✕ Stop editing</button>' : '<button class="btn small ghost" id="btnClear" type="button">Clear</button>'}</div>
+      ${editing ? `<div class="eway-note" style="margin:0 0 14px">✏️ You are editing <b>${esc(editing.number)}</b>. The bill number stays the same. Saving replaces the old PDF.</div>` : ""}
       <div class="card"><div class="editor-head">
         <div>
           <label for="custInput">Customer (type to search)</label>
@@ -315,7 +325,7 @@
       <div class="action-bar">
         <span class="total-mini" id="miniTotal"></span>
         <button class="btn" id="btnPreview" type="button">👁 Preview</button>
-        <button class="btn primary" id="btnGenerate" type="button">✔ Generate & Save</button>
+        <button class="btn primary" id="btnGenerate" type="button">${editing ? "✔ Save changes" : "✔ Generate & Save"}</button>
       </div>`;
     renderCustCard(); renderItems(); renderTotals();
     $("#custInput").addEventListener("change", e => {
@@ -326,10 +336,15 @@
       renderCustCard(); renderTotals(); saveDraft();
     });
     $("#btnNewCust").onclick = () => openCustomerForm(null, "", saved => selectCustomer(saved));
-    $("#invDate").onchange = e => { draft.date = e.target.value || today(); saveDraft(); viewEditor(); };
+    $("#invDate").onchange = e => {
+      const d = e.target.value || today();
+      if (editing && B.fyOf(d) !== editing.fy) { toast(`Date must stay in financial year ${editing.fy}`, true); e.target.value = draft.date; return; }
+      draft.date = d; saveDraft(); viewEditor();
+    };
     $("#btnAddItem").onclick = () => { draft.items.push(blankItem()); renderItems(); saveDraft(); const ins = $$("#items .f-name input"); ins[ins.length - 1].focus(); };
     $("#allIncl").onchange = e => { draft.items.forEach(i => i.taxIncluded = e.target.checked); renderItems(); renderTotals(); saveDraft(); };
-    $("#btnClear").onclick = () => { if (confirm("Clear this bill?")) { draft = newDraft(); saveDraft(); viewEditor(); } };
+    if ($("#btnClear")) $("#btnClear").onclick = () => { if (confirm("Clear this bill?")) { draft = newDraft(); saveDraft(); viewEditor(); } };
+    if ($("#btnStopEdit")) $("#btnStopEdit").onclick = () => { if (confirm("Stop editing? Your changes will not be saved.")) { draft = newDraft(); saveDraft(); location.hash = "#history"; } };
     $("#btnPreview").onclick = () => { const inv = buildInvoice(false); if (inv) showPreview(inv, true); };
     $("#btnGenerate").onclick = generate;
   }
@@ -419,8 +434,14 @@
     if (!draft.customer) { toast("Please select a customer", true); return null; }
     const totals = B.calcInvoice(draft.items, isInterState(draft.customer));
     if (!totals.lines.length) { toast("Please add at least one item with quantity", true); return null; }
-    const fy = B.fyOf(draft.date), seq = B.nextSeq(db.invoices, fy, db.settings.seqStart);
     const { lines, ...tot } = totals;
+    const old = draft.editId ? db.invoices.find(i => i.id === draft.editId) : null;
+    if (old) {   // editing: same id, number and financial year
+      return { ...old, date: draft.date, customer: { ...draft.customer },
+        items: lines.map(({ key, ...l }) => l), totals: tot, status: "active",
+        business: { ...db.settings.business }, bank: { ...db.settings.bank }, editedAt: new Date().toISOString() };
+    }
+    const fy = B.fyOf(draft.date), seq = B.nextSeq(db.invoices, fy, db.settings.seqStart);
     return {
       id: uid(), fy, seq: assignNumber ? seq : null,
       number: assignNumber ? B.invoiceNumber(db.settings.invoicePrefix, seq, db.settings.numberDigits, fy) : "(Preview)",
@@ -437,7 +458,10 @@
     busy(true, "Creating bill…");
     try {
       if (cloud) { busy(true, "Getting latest from Google Drive…"); await pull(); }
+      const editing = !!draft.editId;
+      if (editing && !db.invoices.some(i => i.id === draft.editId)) throw new Error("This bill was deleted on another device");
       const inv = buildInvoice(true);
+      if (editing && inv.imported) inv.webUrl = inv.drivePath = undefined;   // new PDF replaces the attached original link
       inv.items.forEach(l => {
         if (!db.products.some(p => norm(p.name) === norm(l.name)))
           db.products.push({ id: uid(), code: "", name: l.name.trim(), hsn: l.hsn, rate: l.rate, gst: l.gst, taxIncluded: !!l.taxIncluded, active: true });
@@ -452,20 +476,20 @@
         inv.drivePath = path; inv.webUrl = item.webUrl;
         if (needsEway(inv)) await ensureEwayFolder(inv.fy);
       } else downloadBlob(blob, inv.fileName);
-      db.invoices.push(inv);
+      if (editing) db.invoices = db.invoices.map(i => i.id === inv.id ? inv : i);
+      else db.invoices.push(inv);
       await persist();
       draft = newDraft(); saveDraft();
-      busy(false); toast(`${inv.number} saved ✔`);
+      busy(false); toast(editing ? `${inv.number} updated ✔` : `${inv.number} saved ✔`);
       location.hash = "#history";
       showPreview(inv, false);
     } catch (e) { console.error(e); busy(false); toast("Could not save bill: " + e.message, true); }
   }
 
-  // ================= PRINTED INVOICE =================
+  // ================= PRINTED INVOICE (A4) =================
   function invoiceHtml(inv) {
     const b = inv.business, bk = inv.bank, c = inv.customer, t = inv.totals, P = B.plain;
-    const rows = inv.items.map((l, i) => `<tr><td class="c">${i + 1}</td><td>${esc(l.name)}</td><td class="c">${esc(l.hsn)}</td><td class="c">${P(l.qty)}</td><td class="n">${P(l.baseRate)}</td><td class="n">${P(l.taxable)}</td></tr>`).join("")
-      + Array.from({ length: Math.max(0, 14 - inv.items.length) }, () => `<tr class="filler"><td></td><td></td><td></td><td></td><td></td><td></td></tr>`).join("");
+    const rows = inv.items.map((l, i) => `<tr><td class="c">${i + 1}</td><td>${esc(l.name)}</td><td class="c">${esc(l.hsn)}</td><td class="c">${P(l.qty)}</td><td class="n">${P(l.baseRate)}</td><td class="n">${P(l.taxable)}</td></tr>`).join("");
     const taxLines = t.slabs.map(s => t.interState
       ? `<tr class="sum"><td colspan="5" style="text-align:right">IGST ${s.rate}%</td><td class="n">${P(s.igst)}</td></tr>`
       : `<tr class="sum"><td colspan="5" style="text-align:right">SGST ${s.rate / 2}%</td><td class="n">${P(s.sgst)}</td></tr>
@@ -474,8 +498,11 @@
       <td>${t.interState ? "" : s.rate / 2}</td><td>${t.interState ? "" : P(s.sgst)}</td>
       <td>${t.interState ? "" : s.rate / 2}</td><td>${t.interState ? "" : P(s.cgst)}</td>
       <td>${t.interState ? s.rate : ""}</td><td>${t.interState ? P(s.igst) : ""}</td><td>${P(s.tax)}</td></tr>`).join("");
+    const wm = CFG.watermark ? `<img class="wm" src="${esc(CFG.watermark)}" alt="" style="opacity:${Number(CFG.watermarkOpacity) || 0.1}">` : "";
     return `<div class="inv">
+      ${wm}
       ${inv.status === "cancelled" ? '<div class="stamp">CANCELLED</div>' : ""}
+      <div class="body">
       <table>
         <tr><td colspan="2" class="title">Tax Invoice</td></tr>
         <tr><td style="width:60%"><div class="biz-name">${esc(b.name)}</div><div>${esc(b.address)}</div><div>Ph: ${esc(b.phone)}</div><div>GSTIN: ${esc(b.gstin)}</div></td>
@@ -491,40 +518,74 @@
             <tr><td>GSTIN</td><td>: ${esc(c.gstin)}</td></tr>
             <tr><td>State</td><td>: ${esc(c.state)} &nbsp;&nbsp;&nbsp; State Code : ${esc(c.stateCode)}</td></tr></table></td></tr>
       </table>
-      <table class="items" style="border-top:0">
+      <table class="items no-top">
         <tr><th style="width:50px">Sl No.</th><th>Particulars</th><th style="width:80px">HSN Code</th><th style="width:55px">Qty</th><th style="width:80px">Rate</th><th style="width:100px">Amount</th></tr>
         ${rows}
+        <tr class="filler"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
         <tr class="sum"><td colspan="5" style="text-align:right">Taxable Value</td><td class="n">${P(t.taxable)}</td></tr>
         ${taxLines}
         <tr class="sum"><td colspan="5" style="text-align:right">Round off</td><td class="n">${t.roundOff ? P(t.roundOff) : ""}</td></tr>
         <tr class="grand"><td colspan="5" style="text-align:right">TOTAL</td><td class="n">${P(t.total)}</td></tr>
         <tr><td colspan="6"><b>Total Invoice Amount in Words:</b> ${esc(B.inWords(t.total))}</td></tr>
       </table>
-      <table class="taxsum" style="border-top:0">
+      <table class="taxsum no-top">
         <tr><th rowspan="2">Taxable Value</th><th colspan="2">SGST</th><th colspan="2">CGST</th><th colspan="2">IGST</th><th rowspan="2">Total Tax Amount</th></tr>
         <tr><th>Rate %</th><th>Value</th><th>Rate %</th><th>Value</th><th>Rate %</th><th>Value</th></tr>
         ${taxSum}
       </table>
-      <table style="border-top:0"><tr>
+      <table class="no-top"><tr>
         <td style="width:55%"><b>BANK DETAILS</b><table class="kv">
           <tr><td>Bank</td><td>: ${esc(bk.bank)}</td></tr><tr><td>A/C Name</td><td>: ${esc(bk.accName)}</td></tr>
           <tr><td>A/C Number</td><td>: ${esc(bk.accNo)}</td></tr><tr><td>IFSC</td><td>: ${esc(bk.ifsc)}</td></tr>
           <tr><td>BRANCH</td><td>: ${esc(bk.branch)}</td></tr></table></td>
-        <td style="text-align:right"><div style="text-align:left">Certified that the particulars given above are true and correct.</div>
-          <div style="margin-top:10px">For <b>${esc(b.name)}</b></div><div class="sign"></div><div>Authorised Signatory</div></td>
+        <td class="sign-box">
+          <div class="cert">Certified that the particulars given above are true and correct.</div>
+          <div class="for">For <b>${esc(b.name)}</b></div>
+          <div class="space"></div>
+          <div class="who">Authorised Signatory</div>
+        </td>
       </tr></table>
+      </div>
     </div>`;
+  }
+
+  /** Stretch the empty item row so the bill fills exactly one A4 page
+   *  (if there are too many items, the bill simply continues on page 2). */
+  function fitSheet(sheet) {
+    const filler = sheet.querySelector("tr.filler td");
+    if (!filler) return;
+    filler.style.height = "0px";
+    const body = sheet.querySelector(".body");
+    const cs = getComputedStyle(sheet);
+    const used = body.offsetHeight + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    filler.style.height = Math.max(0, A4_H - used - 4) + "px";
+  }
+
+  async function waitImages(el) {
+    await Promise.all([...el.querySelectorAll("img")].map(img =>
+      img.complete && img.naturalWidth ? Promise.resolve()
+        : new Promise(res => { img.onload = img.onerror = res; })));
   }
 
   async function makePdf(inv) {
     const stage = $("#pdfStage");
     stage.innerHTML = invoiceHtml(inv);
+    const sheet = stage.firstElementChild;
     try {
-      return await html2pdf().set({
-        margin: [6, 6, 6, 6], image: { type: "jpeg", quality: 0.95 },
-        html2canvas: { scale: 2, useCORS: true, windowWidth: 794 },
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" }
-      }).from(stage.firstElementChild).outputPdf("blob");
+      await waitImages(sheet);
+      fitSheet(sheet);
+      const prevScroll = window.scrollY;
+      window.scrollTo(0, 0);               // capture from the very top-left, so nothing is cut off
+      const blob = await html2pdf().set({
+        margin: 0,
+        image: { type: "jpeg", quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff",
+                       width: A4_W, windowWidth: A4_W, scrollX: 0, scrollY: 0, x: 0, y: 0 },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },   // 794 px wide sheet = 210 mm exactly
+        pagebreak: { mode: ["css"], avoid: "tr" }
+      }).from(sheet).outputPdf("blob");
+      window.scrollTo(0, prevScroll);
+      return blob;
     } finally { stage.innerHTML = ""; }
   }
 
@@ -537,13 +598,13 @@
 
   function fitPreview() {
     const box = $(".preview-scroll"), sc = $("#previewScale");
-    const s = Math.min(1, (box.clientWidth - 24) / 794);
+    const s = Math.min(1, (box.clientWidth - 24) / A4_W);
     sc.style.transform = `scale(${s})`;
     sc.style.height = ($("#printArea").scrollHeight * s) + "px";
   }
   window.addEventListener("resize", () => { if (!$("#previewModal").classList.contains("hidden")) fitPreview(); });
 
-  function showPreview(inv, isDraft) {
+  async function showPreview(inv, isDraft) {
     $("#previewTitle").textContent = isDraft ? "Preview (not saved yet)" : inv.number + (inv.imported ? " (old bill)" : "");
     $("#printArea").innerHTML = invoiceHtml(inv);
     const bar = $("#ewayBar");
@@ -560,14 +621,19 @@
       : `${inv.webUrl ? `<a class="btn" href="${esc(inv.webUrl)}" target="_blank" rel="noopener">${inv.imported ? "Open original PDF" : "Open in Google Drive"}</a>`
                       : (inv.imported ? `<button class="btn" id="pvAttach" type="button">📎 Attach original PDF</button>` : "")}
          ${!needsEway(inv) && !hasEwb(inv) && inv.status !== "cancelled" ? `<button class="btn" type="button" data-ewbedit="${esc(inv.id)}">🚚 Add E-Way Bill</button>` : ""}
+         <button class="btn" id="pvEdit" type="button">✏️ Edit</button>
          <button class="btn" id="pvPdf" type="button">⬇ PDF</button><button class="btn primary" id="pvPrint" type="button">🖨 Print</button>`;
     if (isDraft) $("#pvGen").onclick = () => { closeModal("previewModal"); generate(); };
     else {
       $("#pvPrint").onclick = () => window.print();
-      $("#pvPdf").onclick = async () => { busy(true, "Creating PDF…"); try { downloadBlob(await makePdf(inv), inv.fileName || "invoice.pdf"); } finally { busy(false); } };
+      $("#pvPdf").onclick = async () => { busy(true, "Creating PDF…"); try { downloadBlob(await makePdf(inv), inv.fileName || "invoice.pdf"); } catch (e) { toast(e.message, true); } finally { busy(false); } };
       if ($("#pvAttach")) $("#pvAttach").onclick = () => startAttach(inv);
+      $("#pvEdit").onclick = () => startEdit(inv);
     }
     openModal("previewModal");
+    const sheet = $("#printArea .inv");
+    await waitImages(sheet);
+    fitSheet(sheet);
     requestAnimationFrame(fitPreview);
   }
 
@@ -589,7 +655,8 @@
         ${need && !got ? `<a class="btn small eway" href="${esc(EWAY_URL)}" target="_blank" rel="noopener noreferrer">🚚 Generate EWB</a>
           <button class="btn small" type="button" data-ewbedit="${esc(i.id)}">📎 Attach EWB</button>` : ""}
         <button class="btn small" data-act="dup" type="button">Duplicate</button>
-        ${i.status !== "cancelled" && !i.imported ? '<button class="btn small danger" data-act="cancel" type="button">Cancel</button>' : ""}
+        <button class="btn small" data-act="edit" type="button">✏️ Edit</button>
+        <button class="btn small danger" data-act="del" type="button">🗑 Delete</button>
       </div></div>`;
     }).join("");
   }
@@ -606,17 +673,52 @@
           items: inv.items.map(l => ({ key: uid(), name: l.name, hsn: l.hsn, qty: l.qty, rate: l.rate, gst: l.gst, taxIncluded: !!l.taxIncluded })) };
         saveDraft(); location.hash = "#new";
       }
-      if (act === "cancel") {
-        if (OD.isConnected()) { try { await OD.ensureToken(); } catch (e) { toast(e.message, true); return; } }
-        if (!confirm(`Cancel ${inv.number}?\n\nThe number will NOT be reused. The bill stays in history marked CANCELLED.`)) return;
-        busy(true, "Updating…");
-        try {
-          inv.status = "cancelled"; inv.cancelledAt = new Date().toISOString();
-          if (OD.hasToken() && inv.drivePath) await OD.upload(inv.drivePath, await makePdf(inv), "application/pdf");
-          await persist(); route();
-        } catch (e) { toast(e.message, true); } finally { busy(false); }
-      }
+      if (act === "edit") startEdit(inv);
+      if (act === "del") deleteBill(inv);
     });
+  }
+
+  /** Open a saved bill in the editor. Its number never changes. */
+  function startEdit(inv) {
+    if (draft && draft.editId !== inv.id && (draft.editId || (draft.items || []).some(i => (i.name || "").trim()))
+        && !confirm("You have an unsaved bill open. Replace it with this bill for editing?")) return;
+    const cust = db.customers.find(c => norm(c.name) === norm(inv.customer.name));
+    draft = { editId: inv.id, customerId: cust ? cust.id : "", customer: { ...inv.customer }, date: inv.date,
+      items: inv.items.map(l => ({ key: uid(), name: l.name, hsn: l.hsn, qty: l.qty, rate: l.rate, gst: l.gst, taxIncluded: !!l.taxIncluded })) };
+    saveDraft();
+    closeModal("previewModal");
+    location.hash = "#new";
+    if ((location.hash.slice(1) || "") === "new") viewEditor();
+  }
+
+  /** Only the LATEST bill of a financial year can be deleted, so no number is ever skipped.
+   *  Its number is given to the next new bill. Older bills can only be edited. */
+  async function deleteBill(inv) {
+    const latest = Math.max(...db.invoices.filter(i => i.fy === inv.fy).map(i => i.seq));
+    if (inv.seq !== latest) {
+      alert(`${inv.number} cannot be deleted.\n\nOnly the latest bill (${B.invoiceNumber(db.settings.invoicePrefix, latest, db.settings.numberDigits, inv.fy)}) can be deleted, so the bill numbers stay continuous.\n\nTo change this bill, use ✏️ Edit. You can change the customer, items and amounts and keep the same number.`);
+      return;
+    }
+    if (OD.isConnected()) { try { await OD.ensureToken(); } catch (e) { toast(e.message, true); return; } }
+    if (!confirm(`Delete ${inv.number}?\n\nThe bill and its PDF will be removed.\nThe next new bill will get the number ${inv.number} again.`)) return;
+    busy(true, "Deleting…");
+    try {
+      if (OD.hasToken()) {
+        await pull();   // make sure no newer bill was made on another device
+        const latestNow = Math.max(...db.invoices.filter(i => i.fy === inv.fy).map(i => i.seq));
+        if (inv.seq !== latestNow) throw new Error("A newer bill was made on another device. Use ✏️ Edit instead.");
+        if (inv.drivePath) { try { await OD.trash(inv.drivePath); } catch (e) { console.warn(e); } }
+      }
+      db.invoices = db.invoices.filter(i => i.id !== inv.id);
+      db.deleted = { ...(db.deleted || {}), [inv.id]: inv.number };
+      // give the number back to the next bill
+      db.settings.seqStart = db.settings.seqStart || {};
+      if ((db.settings.seqStart[inv.fy] || 0) > inv.seq) db.settings.seqStart[inv.fy] = inv.seq;
+      if (draft && draft.editId === inv.id) { draft = newDraft(); saveDraft(); }
+      await persist();
+      busy(false); toast(`${inv.number} deleted. The next bill will be ${inv.number}.`);
+      closeModal("previewModal"); route();
+    } catch (e) { busy(false); toast(e.message, true); }
   }
 
   function viewHistory(arg) {
@@ -818,5 +920,7 @@
     finally { busy(false); updateAccountUi(); }
     route();
   }
+
+  window.__stt = { makePdf, showPreview, merge, db: () => db };   // used by automated tests only
   start();
 })();
