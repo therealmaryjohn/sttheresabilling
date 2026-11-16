@@ -1,25 +1,18 @@
 # ST. THERESA Billing
 
-## Update steps
-1. Open `js/config.js` from this zip and paste your **googleClientId** back in. The file in this zip has it empty.
-2. Upload **all** files and folders to GitHub, replacing the old ones. Include the new **img** folder (`img/logo.png`).
-3. Open the site and press **Ctrl + F5** (on a phone, close and reopen the page) to load the new version.
+It's a billing website for ST. THERESA that makes GST tax invoices and keeps billing records in Google Drive. It works on both phone and computer.
 
-## Bill layout
-- Exactly one A4 page (210 × 297 mm) with even ~10 mm margins. The item box stretches to fill the page.
-- The ST. THERESA logo is printed faintly in the middle as a watermark.
-  To change how dark it is, edit `watermarkOpacity` in `js/config.js` (0.10 is the default; 0.15 is darker).
-  To change the logo, replace `img/logo.png`.
-- The signature box ("For ST. THERESA … Authorised Signatory") is centred.
-- When printing, choose **A4**, margins **None/Default**, and turn on **Background graphics** if the watermark doesn't show.
+## What it does:
+- Makes bills: pick a saved customer, type a product code (like P044) or name, enter the quantity, and it works out the totals. Every bill is an A4 tax invoice in your usual format, with the logo as a watermark.
+- Handles GST automatically: CGST + SGST for Kerala customers, IGST for other states. A Tax incl. tick box covers rates that already include GST.
+- Numbers bills in order: DC/0025/26-27, DC/0026/26-27 and so on, restarting each April. No number is ever skipped or lost.
+- Saves to Google Drive: each bill is saved as a PDF in ST THERESA Billing → Invoices, ready to print or download later. Phone and computer share the same data.
+- Keeps your lists: saved customers, products P001–P060 and other items with their rates, so you don't retype them.
+- Tracks e-way bills: bills over ₹50,000 get a button that opens the E-Way Bill portal, a place to record the e-way bill number and PDF, and a warning when one is missing.
+- Lets you edit or delete: any bill can be edited and keeps its number. Only the latest bill can be deleted, so the numbering stays continuous.
+- Keeps your history: bills DC/0001–DC/0024 are included. You can search by bill number, customer or e-way bill number, and see totals for today, the month and the year.
 
-## Edit and Delete (no bill number is ever lost)
-- **✏️ Edit** works on any bill, old or new. Change the customer, date (within the same financial year), items or rates.
-  The bill **keeps its number**, and the new PDF replaces the old one in Google Drive. E-way bill details stay linked.
-- **🗑 Delete** works only on the **latest** bill (for example, DC/0026 when it's the last one).
-  Its number is given to the next new bill, so the series stays continuous. The PDF moves to the Google Drive bin.
-- Older bills can't be deleted. Use **✏️ Edit** and reuse the number for the correct bill.
-- The old **Cancel** option has been removed.
+It runs on GitHub Pages, and data stays in own Google Drive.
 
 ## Included
 - Old bills DC/0001–DC/0024. New bills continue from DC/0025/26-27.
