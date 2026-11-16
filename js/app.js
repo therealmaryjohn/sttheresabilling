@@ -5,6 +5,7 @@
   const LS_DRAFT = "stt_billing_draft_v1";
   const LS_PENDING = "stt_billing_pending";
   const DATA_FILE = () => `${CFG.driveFolder}/Data/billing-data.json`;
+  const EWAY_URL = CFG.ewayUrl || "https://ewaybillgst.gov.in/Login.aspx";
   const GST_RATES = [0, 3, 5, 12, 18, 28, 40];
 
   const $ = (s, el = document) => el.querySelector(s);
@@ -58,7 +59,9 @@
       if (!e || (i.status === "cancelled" && e.status !== "cancelled")) map.set(i.id, i);
     });
     const invoices = [...map.values()].sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
-    return { ...newer, invoices, updatedAt: [local.updatedAt || "", remote.updatedAt || ""].sort()[1] };
+    const settings = { ...newer.settings,
+      ewayFolders: { ...((remote.settings || {}).ewayFolders || {}), ...((local.settings || {}).ewayFolders || {}) } };
+    return { ...newer, settings, invoices, updatedAt: [local.updatedAt || "", remote.updatedAt || ""].sort()[1] };
   }
 
   // Get latest from Google Drive (master copy shared by phone + computer), then save the combined copy back.
@@ -67,11 +70,50 @@
     const before = remote ? JSON.stringify(remote) : "";
     if (remote && remote.settings) db = merge(db, remote);
     if (!db.updatedAt) db.updatedAt = new Date().toISOString();
+    await ensureEwayFolder(B.fyOf(today()));   // keep this year's E-Way Bill folder ready
     saveLocal();
     if (JSON.stringify(db) !== before) await OD.writeJson(DATA_FILE(), db);
     localStorage.removeItem(LS_PENDING);
     setSync(true);
   }
+
+  // ================= E-WAY BILL =================
+  const ewayLimit = () => Number(db.settings.ewayLimit) || 50000;
+  const needsEway = inv => inv.status !== "cancelled" && inv.totals.total > ewayLimit();
+  const ewayFolderUrl = fy => (db.settings.ewayFolders || {})[fy] || "";
+
+  /** Create "ST THERESA Billing/E-Way Bills/<FY>" in Google Drive (once) and remember its link. */
+  async function ensureEwayFolder(fy) {
+    if (ewayFolderUrl(fy) || !OD.hasToken()) return ewayFolderUrl(fy);
+    const url = await OD.folderLink(`${CFG.driveFolder}/E-Way Bills/${fy}`);
+    db.settings.ewayFolders = { ...(db.settings.ewayFolders || {}), [fy]: url };
+    return url;
+  }
+
+  function ewayButtons(fy) {
+    const url = ewayFolderUrl(fy);
+    return `<a class="btn eway" href="${esc(EWAY_URL)}" target="_blank" rel="noopener noreferrer">🚚 Generate E-Way Bill</a>
+      ${url ? `<a class="btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer">📁 E-Way Bill folder</a>`
+            : `<button class="btn" type="button" data-ewfolder="${esc(fy)}">📁 E-Way Bill folder</button>`}`;
+  }
+
+  // "📁 E-Way Bill folder" when the folder has not been created yet
+  document.addEventListener("click", async e => {
+    const b = e.target.closest("[data-ewfolder]");
+    if (!b) return;
+    if (!OD.isConnected()) { toast("Connect Google Drive first", true); return; }
+    try {
+      await OD.ensureToken();
+      busy(true, "Creating E-Way Bill folder…");
+      const url = await ensureEwayFolder(b.dataset.ewfolder);
+      await persist();
+      busy(false);
+      const a = document.createElement("a");
+      a.className = "btn"; a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "📁 E-Way Bill folder";
+      b.replaceWith(a);
+      toast("Folder ready ✔ Tap it again to open");
+    } catch (err) { busy(false); toast(err.message, true); }
+  });
 
   // ================= UI HELPERS =================
   function toast(msg, err) {
@@ -169,7 +211,7 @@
         <datalist id="prodList">${db.products.filter(p => p.active !== false).map(p => `<option value="${esc(p.name)}">${p.code ? esc(p.code) + " · " : ""}₹${p.rate}</option>`).join("")}</datalist>
         <div class="row" style="margin-top:10px"><button class="btn" id="btnAddItem" type="button">＋ Add item</button></div>
       </div>
-      <div class="card"><div id="totals" class="totals"></div><div id="words" class="words"></div></div>
+      <div class="card"><div id="totals" class="totals"></div><div id="words" class="words"></div><div id="ewayNote"></div></div>
       <div class="action-bar">
         <span class="total-mini" id="miniTotal"></span>
         <button class="btn" id="btnPreview" type="button">👁 Preview</button>
@@ -280,6 +322,8 @@
     $("#totals").innerHTML = rows.join("");
     $("#words").textContent = t.total ? "Rupees " + B.inWords(t.total) : "";
     $("#miniTotal").textContent = money(t.total);
+    $("#ewayNote").innerHTML = t.total > ewayLimit()
+      ? `<div class="eway-note">🚚 <b>E-Way Bill needed</b>: this bill is above ${money(ewayLimit())}. After you generate the bill, use the <b>Generate E-Way Bill</b> button.</div>` : "";
   }
 
   /** Build the invoice object from the draft. assignNumber=true only when finally saving. */
@@ -324,6 +368,7 @@
         const path = `${CFG.driveFolder}/Invoices/${inv.fy}/${inv.fileName}`;
         const item = await OD.upload(path, blob, "application/pdf");
         inv.drivePath = path; inv.webUrl = item.webUrl;
+        if (needsEway(inv)) await ensureEwayFolder(inv.fy);
       } else {
         downloadBlob(blob, inv.fileName);
       }
@@ -441,6 +486,16 @@
   function showPreview(inv, isDraft) {
     $("#previewTitle").textContent = isDraft ? "Preview (not saved yet)" : inv.number;
     $("#printArea").innerHTML = invoiceHtml(inv);
+
+    // E-Way Bill bar (only for bills above the limit)
+    const bar = $("#ewayBar");
+    if (needsEway(inv)) {
+      bar.innerHTML = isDraft
+        ? `<span class="msg">🚚 <b>E-Way Bill needed</b> (above ${money(ewayLimit())}). Generate and save the bill first. The E-Way Bill button appears after that.</span>`
+        : `<span class="msg">🚚 <b>E-Way Bill needed</b> for ${esc(inv.number)} (${money(inv.totals.total)}). After creating it on the portal, upload the PDF to the E-Way Bill folder.</span>${ewayButtons(inv.fy)}`;
+      bar.classList.remove("hidden");
+    } else bar.classList.add("hidden");
+
     const acts = $("#previewActions");
     acts.innerHTML = isDraft
       ? `<button class="btn" data-close="previewModal" type="button">Back to edit</button><button class="btn primary" id="pvGen" type="button">✔ Generate & Save</button>`
@@ -459,10 +514,12 @@
   function invoiceRows(list) {
     return list.map(i => `<div class="list-item ${i.status === "cancelled" ? "cancelled" : ""}" data-id="${i.id}">
       <div class="main"><b>${esc(i.number)}</b> ${i.status === "cancelled" ? '<span class="badge-c">CANCELLED</span>' : ""}
+        ${needsEway(i) ? '<span class="badge-ewb">E-Way Bill</span>' : ""}
         <small>${dmy(i.date)} · ${esc(i.customer.name)}</small></div>
       <div class="money">${money(i.totals.total)}</div>
       <div class="row">
         <button class="btn small" data-act="view" type="button">View / Print</button>
+        ${needsEway(i) ? `<a class="btn small eway" href="${esc(EWAY_URL)}" target="_blank" rel="noopener noreferrer">🚚 E-Way Bill</a>` : ""}
         <button class="btn small" data-act="dup" type="button" title="Create a new bill with the same items">Duplicate</button>
         ${i.status !== "cancelled" ? '<button class="btn small danger" data-act="cancel" type="button">Cancel</button>' : ""}
       </div></div>`).join("");
@@ -495,17 +552,18 @@
       <div class="card row">
         <input class="search" id="hSearch" placeholder="Search bill no., customer, phone">
         <input type="month" id="hMonth" style="max-width:180px">
+        <label class="check"><input type="checkbox" id="hEway"> Only E-Way Bill bills</label>
         <span class="spacer"></span><b id="hSum"></b></div>
       <div class="list" id="hList"></div>`;
     const draw = () => {
-      const q = norm($("#hSearch").value), m = $("#hMonth").value;
-      const list = db.invoices.filter(i => (!m || i.date.startsWith(m)) &&
+      const q = norm($("#hSearch").value), m = $("#hMonth").value, ew = $("#hEway").checked;
+      const list = db.invoices.filter(i => (!m || i.date.startsWith(m)) && (!ew || needsEway(i)) &&
         (!q || norm(i.number).includes(q) || norm(i.customer.name).includes(q) || norm(i.customer.phone).includes(q))).reverse();
       $("#hList").innerHTML = invoiceRows(list) || '<p class="muted">No bills found.</p>';
       $("#hSum").textContent = `${list.length} bills · ${money(list.filter(i => i.status !== "cancelled").reduce((s, i) => s + i.totals.total, 0))}`;
       bindInvoiceRows();
     };
-    $("#hSearch").oninput = draw; $("#hMonth").onchange = draw; draw();
+    $("#hSearch").oninput = draw; $("#hMonth").onchange = draw; $("#hEway").onchange = draw; draw();
   }
 
   // ================= CUSTOMERS =================
@@ -628,6 +686,10 @@
         <div><label>Prefix</label><input id="nPre" value="${esc(s.invoicePrefix)}"></div>
         <div><label>Next number for FY ${fy}</label><input id="nNext" type="number" min="1" value="${nextSeq}"></div>
         <div class="full muted">Example: ${esc(B.invoiceNumber(s.invoicePrefix, nextSeq, s.numberDigits, fy))}. Numbers restart from 1 every April.</div></div></div>
+      <div class="card"><h2>E-Way Bill</h2><div class="form-grid" style="padding:0">
+        <div><label>Show E-Way Bill button when bill total is above ₹</label><input id="eLimit" type="number" min="0" step="1" value="${ewayLimit()}"></div>
+        <div class="full muted">Upload E-Way Bill PDFs by hand to <b>${esc(CFG.driveFolder)}/E-Way Bills/${esc(fy)}</b> in Google Drive.</div>
+        <div class="full row">${ewayButtons(fy)}</div></div></div>
       <div class="row"><button class="btn primary" id="sSave" type="button">Save settings</button></div>
       <div class="card" style="margin-top:14px"><h2>Backup</h2>
         <p class="muted">When Google Drive is connected, all data is saved automatically to <b>${esc(CFG.driveFolder)}/Data/billing-data.json</b> and bills to <b>${esc(CFG.driveFolder)}/Invoices/</b>.</p>
@@ -637,6 +699,8 @@
       Object.assign(b, { name: fv("sName"), address: fv("sAddr"), phone: fv("sPhone"), gstin: fv("sGst"), state: fv("sState"), stateCode: fv("sCode") });
       Object.assign(k, { bank: fv("kBank"), accName: fv("kName"), accNo: fv("kNo"), ifsc: fv("kIfsc"), branch: fv("kBr") });
       s.invoicePrefix = fv("nPre") || "DC";
+      const lim = Number(fv("eLimit"));
+      s.ewayLimit = lim > 0 ? lim : 50000;
       const n = parseInt(fv("nNext"), 10);
       const used = db.invoices.filter(i => i.fy === fy).map(i => i.seq);
       if (n && used.length && n <= Math.max(...used)) { toast(`Number ${n} already used. Must be above ${Math.max(...used)}.`, true); return; }
@@ -668,6 +732,7 @@
 
   async function start() {
     loadLocal();
+    if (!db.settings.ewayLimit) db.settings.ewayLimit = 50000;
     $("#btnSignIn").onclick = async () => {
       try {
         await OD.ensureToken();                 // must be first: may open Google sign-in
@@ -691,7 +756,5 @@
     route();
   }
 
-  // Exposed only for automated tests
-  window.__stt = { merge };
   start();
 })();

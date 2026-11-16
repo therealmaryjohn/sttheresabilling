@@ -21,7 +21,9 @@ window.SEED_DATA = {
     invoicePrefix: "DC",
     numberDigits: 4,
     // Next invoice for 2026-27 continues after DC/0024/26-27
-    seqStart: { "26-27": 25 }
+    seqStart: { "26-27": 25 },
+    // Bills ABOVE this amount (₹) show the E-Way Bill button
+    ewayLimit: 50000
   },
   customers: [
     { name: "DEEPIKA PRINTERS", address: "DEEPIKA JUNCTION, KATTAPPANA - 685508", phone: "04868272670", gstin: "32AAGAD6081R2Z9", state: "Kerala", stateCode: "32" },

@@ -88,6 +88,12 @@
     return parent;
   }
 
+  /** Make sure a folder exists and return its Google Drive web link. */
+  async function folderLink(path) {
+    const id = await folderId(path.split("/").filter(Boolean));
+    return "https://drive.google.com/drive/folders/" + id;
+  }
+
   const split = path => { const p = path.split("/").filter(Boolean); return { dirs: p.slice(0, -1), name: p[p.length - 1] }; };
 
   /** Read a JSON file. Returns null if it doesn't exist yet. */
@@ -140,7 +146,7 @@
   }
 
   window.Cloud = {
-    enabled, init, ensureToken, hasToken, isConnected, readJson, writeJson, upload, fetchUser, signOut,
+    enabled, init, ensureToken, hasToken, isConnected, readJson, writeJson, upload, folderLink, fetchUser, signOut,
     userName: () => localStorage.getItem(LS_USER) || ""
   };
 })();
