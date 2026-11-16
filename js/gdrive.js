@@ -1,6 +1,5 @@
 // Google Drive connection (Google Identity Services + Drive API v3).
-// Uses the "drive.file" permission: the app can ONLY see files it created itself,
-// not the rest of your Google Drive. No password or secret is stored in this code.
+// "drive.file" permission: the app can ONLY see files it created itself.
 (function () {
   const cfg = window.APP_CONFIG || {};
   const SCOPE = "https://www.googleapis.com/auth/drive.file";
@@ -24,8 +23,7 @@
     return isConnected();
   }
 
-  /** Get a valid access token. When a new one is needed, Google shows a small sign-in window,
-   *  so this must be called straight from a button tap (before any other await). */
+  // Must be called straight from a button tap: Google may show its sign-in window.
   function ensureToken() {
     if (hasToken()) return Promise.resolve(tok.value);
     if (!client) return Promise.reject(new Error("Google Drive is not set up yet. Add googleClientId in js/config.js."));
@@ -39,8 +37,7 @@
         resolve(tok.value);
       };
       client.error_callback = e => reject(new Error(e && e.type === "popup_closed"
-        ? "Google sign-in window was closed"
-        : "Google sign-in was blocked. Allow pop-ups for this site and try again."));
+        ? "Google sign-in window was closed" : "Google sign-in was blocked. Allow pop-ups for this site and try again."));
       const opts = { prompt: isConnected() ? "" : "consent" };
       const hint = localStorage.getItem(LS_USER);
       if (hint) opts.login_hint = hint;
@@ -49,25 +46,20 @@
   }
 
   async function api(url, opts = {}) {
-    if (!hasToken()) { const e = new Error("Google sign-in expired - tap Sync"); e.needAuth = true; throw e; }
+    if (!hasToken()) throw new Error("Google sign-in expired - tap Sync");
     const res = await fetch(url, { ...opts, headers: { Authorization: "Bearer " + tok.value, ...(opts.headers || {}) } });
-    if (res.status === 401) {
-      tok = null; localStorage.removeItem(LS_TOK);
-      const e = new Error("Google sign-in expired - tap Sync"); e.needAuth = true; throw e;
-    }
+    if (res.status === 401) { tok = null; localStorage.removeItem(LS_TOK); throw new Error("Google sign-in expired - tap Sync"); }
     if (!res.ok) throw new Error("Google Drive error " + res.status + ": " + (await res.text()).slice(0, 200));
     return res;
   }
 
   const q = s => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-
   async function findChild(parent, name, isFolder) {
     const query = `name='${q(name)}' and '${parent}' in parents and trashed=false and mimeType${isFolder ? "=" : "!="}'${FOLDER}'`;
     const res = await api(`${API}/files?q=${encodeURIComponent(query)}&fields=files(id,webViewLink)&spaces=drive&pageSize=1`);
     return (await res.json()).files[0] || null;
   }
 
-  /** "A/B/C" -> id of folder C, creating folders that don't exist yet */
   async function folderId(parts) {
     let parent = "root", key = "";
     for (const name of parts) {
@@ -88,15 +80,12 @@
     return parent;
   }
 
-  /** Make sure a folder exists and return its Google Drive web link. */
   async function folderLink(path) {
-    const id = await folderId(path.split("/").filter(Boolean));
-    return "https://drive.google.com/drive/folders/" + id;
+    return "https://drive.google.com/drive/folders/" + await folderId(path.split("/").filter(Boolean));
   }
 
   const split = path => { const p = path.split("/").filter(Boolean); return { dirs: p.slice(0, -1), name: p[p.length - 1] }; };
 
-  /** Read a JSON file. Returns null if it doesn't exist yet. */
   async function readJson(path) {
     const { dirs, name } = split(path);
     const f = await findChild(await folderId(dirs), name, false);
@@ -104,7 +93,6 @@
     return (await api(`${API}/files/${f.id}?alt=media`)).json();
   }
 
-  /** Create the file, or replace it if a file with the same name is already in that folder. */
   async function upload(path, data, type) {
     const { dirs, name } = split(path);
     const parent = await folderId(dirs);
@@ -112,9 +100,7 @@
     const existing = await findChild(parent, name, false);
     let res;
     if (existing) {
-      res = await api(`${UPLOAD}/files/${existing.id}?uploadType=media&fields=id,webViewLink`, {
-        method: "PATCH", headers: { "Content-Type": type }, body: blob
-      });
+      res = await api(`${UPLOAD}/files/${existing.id}?uploadType=media&fields=id,webViewLink`, { method: "PATCH", headers: { "Content-Type": type }, body: blob });
     } else {
       const b = "stt" + Date.now();
       const body = new Blob([
@@ -133,7 +119,7 @@
 
   async function fetchUser() {
     try {
-      const u = (await (await api(`${API}/about?fields=user(emailAddress,displayName)`)).json()).user;
+      const u = (await (await api(`${API}/about?fields=user(emailAddress)`)).json()).user;
       if (u && u.emailAddress) localStorage.setItem(LS_USER, u.emailAddress);
     } catch (e) { console.warn(e); }
   }
@@ -145,8 +131,6 @@
     Object.keys(folderCache).forEach(k => delete folderCache[k]);
   }
 
-  window.Cloud = {
-    enabled, init, ensureToken, hasToken, isConnected, readJson, writeJson, upload, folderLink, fetchUser, signOut,
-    userName: () => localStorage.getItem(LS_USER) || ""
-  };
+  window.Cloud = { enabled, init, ensureToken, hasToken, isConnected, readJson, writeJson, upload, folderLink, fetchUser, signOut,
+    userName: () => localStorage.getItem(LS_USER) || "" };
 })();
