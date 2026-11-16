@@ -32,7 +32,7 @@ window.SEED_DATA = {
     { name: "HOLY CITY", address: "Near Prof. P.C. Thomas Classes, Ambakkadan Jn., Thrissur-5", phone: "0487 - 2320948, 2321959", gstin: "32ADJPJ6264B1ZW", state: "Kerala", stateCode: "32" },
     { name: "CATHOLIC ART CENTRE", address: "Broadway, Ernakulam, Kochi - 682031", phone: "+91 8089007117", gstin: "32AEAPS6518K1ZE", state: "Kerala", stateCode: "32" }
   ],
-  // [name, hsn, rate]  - all at 5% GST, rate excluding tax (as in the sample bills)
+  // [name, hsn, rate]  - statues come from catalog.js; all at 5% GST, rate excluding tax (as in the sample bills)
   products: [
     ["Candle Stand", "7326", 650],
     ["Tablecloth 1 Meter", "6101", 200],
@@ -41,26 +41,7 @@ window.SEED_DATA = {
     ["Tablecloth 2 1/2 Meter", "6101", 500],
     ["Tablecloth 3 Meter", "6101", 600],
     ["Tablecloth 3 1/2 Meter", "6101", 700],
-    ["Tablecloth 4 Meter", "6101", 800],
-    ["Divine Infant Jesus 8.5 Inch", "9703", 430],
-    ["Sacred Mary 7 Inch", "9703", 430],
-    ["Rosa Mystica 8 Inch", "9703", 325],
-    ["Holy Cross Standing 12 Inch", "9703", 575],
-    ["Holy Family 2 8 Inch", "9703", 350],
-    ["Holy Family 5 8 Inch", "9703", 395],
-    ["Holy Family 6 8 Inch", "9703", 385],
-    ["St. Antony 8 Inch", "9703", 325],
-    ["Our Lady of Grace 8 Inch", "9703", 340],
-    ["Lourd Matha 8 Inch", "9703", 340],
-    ["St. Joseph 8 Inch", "9703", 325],
-    ["Fathima Matha 8 Inch", "9703", 340],
-    ["Velankanni Matha 10 Inch", "9703", 420],
-    ["Infant Jesus 13 Inch", "9703", 640],
-    ["Sacred Heart of Jesus 8 Inch", "9703", 595],
-    ["Divine Mercy 8 Inch", "9703", 325],
-    ["Madona Mary 8 Inch", "9703", 340],
-    ["Holy Trinity Crucifix Wall Cross 9.5 Inch", "9703", 495],
-    ["Holy Trinity Crucifix Wall Cross 18 Inch", "9703", 1140]
+    ["Tablecloth 4 Meter", "6101", 800]
   ]
 };
 

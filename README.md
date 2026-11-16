@@ -60,6 +60,13 @@ Also:
 - **Settings → E-Way Bill** lets you change the ₹50,000 limit and open the folder.
 - A new folder is made for each financial year automatically (26-27, 27-28, …).
 
+## Product catalogue
+
+All 60 catalogue products (**P001 – P060**) are built in. They're added automatically the first time this version opens.
+- While billing, type the **code** (for example `P044`) or the name, and the rate fills in by itself.
+- **P049, P058, P059, P060** have no price in the catalogue, so they show **Set price** in Products. Open them with **Edit** and enter the rate.
+- Your own products and any changes you made are kept.
+
 ## Daily use
 
 - **⟳ Sync** at the top gets the latest data. Use it when you switch between phone and computer.

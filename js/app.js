@@ -71,10 +71,25 @@
     if (remote && remote.settings) db = merge(db, remote);
     if (!db.updatedAt) db.updatedAt = new Date().toISOString();
     await ensureEwayFolder(B.fyOf(today()));   // keep this year's E-Way Bill folder ready
+    applyCatalog();
     saveLocal();
     if (JSON.stringify(db) !== before) await OD.writeJson(DATA_FILE(), db);
     localStorage.removeItem(LS_PENDING);
     setSync(true);
+  }
+
+  /** One-time: add catalogue products (P001-P060). Runs once per catalogue version.
+   *  Products already present (same code) are left as they are, so your edits are kept. */
+  function applyCatalog() {
+    const ver = window.CATALOG_VERSION || 0;
+    if (!window.CATALOG || (db.catalogVersion || 0) >= ver) return false;
+    const replaced = new Set((window.CATALOG_REPLACES || []).map(norm));
+    db.products = db.products.filter(p => p.code || !replaced.has(norm(p.name)));
+    const codes = new Set(db.products.map(p => norm(p.code)).filter(Boolean));
+    window.CATALOG.forEach(c => { if (!codes.has(norm(c.code))) { db.products.push({ id: uid(), ...c, active: true }); } });
+    db.catalogVersion = ver;
+    db.updatedAt = new Date().toISOString();
+    return true;   // data changed (at least the version) - save it
   }
 
   // ================= E-WAY BILL =================
@@ -649,11 +664,12 @@
       <div class="card"><input class="search" id="pSearch" placeholder="Search name, code, HSN"></div><div class="list" id="pList"></div>`;
     const draw = () => {
       const q = norm($("#pSearch").value);
-      const list = db.products.filter(p => !q || [p.name, p.code, p.hsn].some(v => norm(v).includes(q))).sort((a, b) => a.name.localeCompare(b.name));
+      const list = db.products.filter(p => !q || [p.name, p.code, p.hsn].some(v => norm(v).includes(q)))
+        .sort((a, b) => (a.code ? 0 : 1) - (b.code ? 0 : 1) || (a.code || "").localeCompare(b.code || "") || a.name.localeCompare(b.name));
       $("#pList").innerHTML = list.map(p => `<div class="list-item ${p.active === false ? "cancelled" : ""}" data-pid="${p.id}">
         <div class="main"><b>${p.code ? esc(p.code) + " · " : ""}${esc(p.name)}</b>
           <small>HSN ${esc(p.hsn)} · GST ${p.gst}% · ${p.taxIncluded ? "Rate includes tax" : "Tax added on top"}${p.active === false ? " · inactive" : ""}</small></div>
-        <div class="money">₹${p.rate}</div>
+        <div class="money">${p.rate ? "₹" + p.rate : '<span class="badge-c">Set price</span>'}</div>
         <div class="row"><button class="btn small" data-a="edit" type="button">Edit</button><button class="btn small danger" data-a="del" type="button">Delete</button></div></div>`).join("") || '<p class="muted">No products.</p>';
       $$("[data-pid] [data-a]").forEach(b => b.onclick = () => {
         const p = db.products.find(x => x.id === b.closest("[data-pid]").dataset.pid);
@@ -733,6 +749,7 @@
   async function start() {
     loadLocal();
     if (!db.settings.ewayLimit) db.settings.ewayLimit = 50000;
+    if (applyCatalog()) { saveLocal(); if (OD.isConnected()) localStorage.setItem(LS_PENDING, "1"); }
     $("#btnSignIn").onclick = async () => {
       try {
         await OD.ensureToken();                 // must be first: may open Google sign-in
